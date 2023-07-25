@@ -17,7 +17,7 @@ chmod +x kubebuilder && mv kubebuilder /usr/local/bin/
 ### 2. Create a new project
 
 ```bash
-kubebuilder init --domain altlayer.io --license mit --owner "AltResearch"
+kubebuilder init --plugins go/v4 --domain altlayer.io --license apache2 --owner "AltResearch"
 ```
 
 ### 3. Create an API
