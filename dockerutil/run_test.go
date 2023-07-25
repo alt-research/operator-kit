@@ -18,6 +18,10 @@ func TestSimpleRun(t *testing.T) {
 	require.NoError(t, err)
 	cli, err := client.NewClientWithOpts(client.FromEnv)
 	require.NoError(t, err)
+
+	err = PullImage(context.Background(), cli, "busybox", nil, nil)
+	assert.NoError(t, err)
+
 	out, err := SimpleRun(context.Background(), cli, "busybox", ContainerOpts{
 		Binds:      []string{temp + ":/temp"},
 		Entrypoint: []string{"sh", "-c"},

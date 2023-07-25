@@ -10,7 +10,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 type ObjectList interface {
@@ -56,11 +55,11 @@ func (b *Builder[O, L]) Owns(obj client.Object) *Builder[O, L] {
 	return b
 }
 
-func (b *Builder[O, L]) Watches(src source.Source, eventhandler handler.EventHandler, opts ...builder.WatchesOption) *Builder[O, L] {
+func (b *Builder[O, L]) Watches(obj client.Object, eventhandler handler.EventHandler, opts ...builder.WatchesOption) *Builder[O, L] {
 	if b.err != nil {
 		return b
 	}
-	b.builder.Watches(src, eventhandler, opts...)
+	b.builder.Watches(obj, eventhandler, opts...)
 	return b
 }
 
@@ -70,11 +69,11 @@ func (b *Builder[O, L]) WatchIndexed(watchedType client.Object, field string, fn
 	}
 	b.err = b.mgr.GetFieldIndexer().IndexField(context.Background(), b.typ, field, func(o client.Object) []string { return fn(o.(O)) })
 	b.builder.Watches(
-		&source.Kind{Type: watchedType},
-		handler.EnqueueRequestsFromMapFunc(func(obj client.Object) []reconcile.Request {
+		watchedType,
+		handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 			list := b.listType.DeepCopyObject().(L)
 			listOps := &client.ListOptions{Namespace: obj.GetNamespace(), FieldSelector: fields.OneTermEqualSelector(field, obj.GetName())}
-			if err := b.mgr.GetClient().List(context.Background(), list, listOps); err != nil {
+			if err := b.mgr.GetClient().List(ctx, list, listOps); err != nil {
 				return []reconcile.Request{}
 			}
 			items := list.GetItems()
@@ -93,8 +92,8 @@ func (b *Builder[O, L]) WatchOneToOne(watchedType client.Object, fn func(obj O) 
 		return b
 	}
 	b.builder.Watches(
-		&source.Kind{Type: watchedType},
-		handler.EnqueueRequestsFromMapFunc(func(obj client.Object) []reconcile.Request {
+		watchedType,
+		handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 			name := fn(obj.(O))
 			if name == "" {
 				return []reconcile.Request{}

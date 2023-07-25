@@ -68,7 +68,9 @@ func PullImage(ctx context.Context, cli *client.Client, refStr string, auhthFunc
 			}
 			percent = current / total * 100.0
 		}
-		progressFunc(percent)
+		if progressFunc != nil {
+			progressFunc(percent)
+		}
 	}
 
 	// Latest event for new image
