@@ -12,13 +12,12 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.37.0
 	github.com/btcsuite/btcd v0.23.4
 	github.com/btcsuite/btcd/btcutil v1.1.3
-	github.com/carlmjohnson/requests v0.23.4
 	github.com/deckarep/golang-set/v2 v2.3.0
 	github.com/docker/docker v24.0.5+incompatible
 	github.com/dustin/go-humanize v1.0.1
 	github.com/ethereum/go-ethereum v1.12.0
 	github.com/kataras/go-fs v0.0.6
-	github.com/libp2p/go-libp2p v0.28.1
+	github.com/libp2p/go-libp2p v0.28.2
 	github.com/onsi/ginkgo/v2 v2.11.0
 	github.com/onsi/gomega v1.27.8
 	github.com/opencontainers/image-spec v1.0.2
