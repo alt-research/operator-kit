@@ -198,12 +198,11 @@ func Unique[T comparable](a []T) []T {
 func Ordered[T constraints.Ordered](a []T, reverse bool) []T {
 	out := make([]T, len(a))
 	copy(out, a)
-	sort.Slice(out, func(i, j int) bool {
-		if reverse {
-			return out[i] > out[j]
-		}
-		return out[i] < out[j]
-	})
+	if reverse {
+		sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
+	} else {
+		sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	}
 	return out
 }
 
