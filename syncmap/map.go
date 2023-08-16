@@ -14,6 +14,7 @@ func (m *Map[K, V]) Load(key K) (value V, ok bool) {
 	}
 	return v.(V), ok
 }
+
 func (m *Map[K, V]) LoadAndDelete(key K) (value V, loaded bool) {
 	v, loaded := m.m.LoadAndDelete(key)
 	if !loaded {
@@ -21,11 +22,22 @@ func (m *Map[K, V]) LoadAndDelete(key K) (value V, loaded bool) {
 	}
 	return v.(V), loaded
 }
+
 func (m *Map[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
 	a, loaded := m.m.LoadOrStore(key, value)
 	return a.(V), loaded
 }
+
 func (m *Map[K, V]) Range(f func(key K, value V) bool) {
 	m.m.Range(func(key, value any) bool { return f(key.(K), value.(V)) })
 }
 func (m *Map[K, V]) Store(key K, value V) { m.m.Store(key, value) }
+
+func (m *Map[K, V]) ToMap() map[K]V {
+	out := make(map[K]V)
+	m.Range(func(key K, value V) bool {
+		out[key] = value
+		return true
+	})
+	return out
+}
