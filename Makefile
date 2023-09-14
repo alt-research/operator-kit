@@ -64,6 +64,10 @@ fmt: ## Run go fmt against code.
 test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
 
+.PHONY: addlicense
+addlicense: addlicense-bin ## Add license to all files
+	addlicense -f LICENSE-HEADER -ignore ".github/**/*" -ignore "**/*.yaml" -ignore "**/*.yml" . 
+
 ##@ Build Dependencies
 
 ## Location to install dependencies to
@@ -77,6 +81,7 @@ ABS_LOCALBIN=$(shell pwd)/$(LOCALBIN)
 ## Tool Binaries
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 LINTER ?= $(LOCALBIN)/golangci-lint
+ADDLICENSE ?= $(LOCALBIN)/addlicense
 
 .PHONY: linter
 linter: $(LINTER) ## instal golangci-lint
@@ -89,3 +94,8 @@ $(LINTER): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(ABS_LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+.PHONY: addlicense-bin
+addlicense-bin: $(ADDLICENSE) ## Download addlicense locally if necessary.
+$(ADDLICENSE): $(LOCALBIN)
+	test -s $(LOCALBIN)/addlicense || GOBIN=$(ABS_LOCALBIN) go install github.com/google/addlicense@latest
