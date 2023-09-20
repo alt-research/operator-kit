@@ -18,7 +18,7 @@ import (
 func ParseDerivationPath(path string) (*DerivationPath, error) {
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 {
-		return nil, fmt.Errorf("no derivation path")
+		return nil, fmt.Errorf("invalid path: derivation path empty")
 	}
 
 	// clean all the parts of any trim spaces
@@ -28,7 +28,7 @@ func ParseDerivationPath(path string) (*DerivationPath, error) {
 
 	// first part has to be an 'm'
 	if parts[0] != "m" {
-		return nil, fmt.Errorf("first has to be m")
+		return nil, fmt.Errorf("invalid path: first has to be m")
 	}
 
 	result := DerivationPath{}
@@ -41,13 +41,13 @@ func ParseDerivationPath(path string) (*DerivationPath, error) {
 
 		bigVal, ok := new(big.Int).SetString(p, 0)
 		if !ok {
-			return nil, fmt.Errorf("invalid path")
+			return nil, fmt.Errorf("invalid path: parts should be integers")
 		}
 		val.Add(val, bigVal)
 
 		// TODO, limit to uint32
 		if !val.IsUint64() {
-			return nil, fmt.Errorf("bad")
+			return nil, fmt.Errorf("invalid path: parts overflowed, should be uint32")
 		}
 		result = append(result, uint32(val.Uint64()))
 	}
