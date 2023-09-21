@@ -15,7 +15,7 @@ require (
 	github.com/deckarep/golang-set/v2 v2.3.0
 	github.com/docker/docker v24.0.5+incompatible
 	github.com/dustin/go-humanize v1.0.1
-	github.com/ethereum/go-ethereum v1.12.0
+	github.com/ethereum/go-ethereum v1.12.1
 	github.com/kataras/go-fs v0.0.6
 	github.com/libp2p/go-libp2p v0.28.1
 	github.com/onsi/ginkgo/v2 v2.11.0
@@ -97,7 +97,7 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/hashicorp/go-version v1.6.0 // indirect
-	github.com/holiman/uint256 v1.2.2-0.20230321075855-87b91420868c // indirect
+	github.com/holiman/uint256 v1.2.3 // indirect
 	github.com/huandu/xstrings v1.3.3 // indirect
 	github.com/imdario/mergo v0.3.11 // indirect
 	github.com/ipfs/go-cid v0.4.1 // indirect
