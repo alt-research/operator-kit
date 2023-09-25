@@ -8,12 +8,14 @@ package ethkey
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"strings"
 
 	"github.com/alt-research/operator-kit/hextool"
 	"github.com/alt-research/operator-kit/must"
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/tyler-smith/go-bip39"
 )
@@ -42,6 +44,10 @@ func FromMnemonic(mnemonic string, path string) (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	return FromSeed(seed, path)
+}
+
+func FromSeed(seed []byte, path string) (*ecdsa.PrivateKey, error) {
 	masterKey, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
 	if err != nil {
 		return nil, err
@@ -51,6 +57,19 @@ func FromMnemonic(mnemonic string, path string) (*ecdsa.PrivateKey, error) {
 		return nil, err
 	}
 	return dPath.Derive(masterKey)
+}
+
+func ParseSeed(keyOrMnemonic string) ([]byte, error) {
+	if keyOrMnemonic == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(keyOrMnemonic, "0x") {
+		return hexutil.Decode(keyOrMnemonic)
+	}
+	if !bip39.IsMnemonicValid(keyOrMnemonic) {
+		return nil, fmt.Errorf("invalid mnemonic")
+	}
+	return bip39.NewSeed(keyOrMnemonic, ""), nil
 }
 
 func PrivateKeyToAddress(k *ecdsa.PrivateKey) string {
