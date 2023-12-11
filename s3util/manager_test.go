@@ -3,7 +3,7 @@
 // This source code is licensed under the limited license found in the LICENSE file
 // in the root directory of this source tree.
 
-package s3util_test
+package s3util
 
 import (
 	. "github.com/onsi/ginkgo/v2"

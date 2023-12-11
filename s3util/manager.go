@@ -7,6 +7,7 @@ package s3util
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -21,6 +22,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -236,4 +238,136 @@ func (b *BucketManager) DeleteObject(ctx context.Context, key string) (*awss3.De
 		Bucket: &b.Bucket,
 		Key:    &key,
 	})
+}
+
+func (b *BucketManager) Download(ctx context.Context, key string, dst string, overwrite bool) (files []string, err error) {
+	if ok, err := b.IsPathDir(ctx, key); err != nil {
+		return []string{}, err
+	} else if !ok {
+		file, err := b.DownloadSingle(ctx, key, dst, overwrite)
+		return []string{file}, err
+	}
+	if !overwrite {
+		if _, err := os.Stat(dst); err == nil {
+			return []string{}, errors.Errorf("dest %s already exists", dst)
+		}
+	}
+	err = os.MkdirAll(dst, 0o755)
+	if err != nil {
+		return []string{}, err
+	}
+	var keys []string
+	var continuation *string
+	for {
+		objects, err := b.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+			Bucket:            &b.Bucket,
+			Prefix:            &key,
+			ContinuationToken: continuation,
+		})
+		if err != nil {
+			return []string{}, err
+		}
+		for _, obj := range objects.Contents {
+			keys = append(keys, *obj.Key)
+		}
+		if !objects.IsTruncated {
+			break
+		}
+		continuation = objects.NextContinuationToken
+	}
+	errG, ctx := errgroup.WithContext(ctx)
+	filenameCh := make(chan string, len(keys))
+	for _, k := range keys {
+		k := k
+		errG.Go(func() error {
+			if err := b.sem.Acquire(ctx, 1); err != nil {
+				return errors.Wrap(err, "Failed to acquire semaphore")
+			}
+			defer b.sem.Release(1)
+			filename, err := b.DownloadSingle(ctx, k, dst, overwrite)
+			if err != nil {
+				log.Log.Error(err, "Failed to download file", "key", k)
+				return err
+			}
+			filenameCh <- filename
+			return nil
+		})
+	}
+	go func() {
+		for filename := range filenameCh {
+			files = append(files, filename)
+		}
+	}()
+	err = errG.Wait()
+	close(filenameCh)
+	return
+}
+
+func (b *BucketManager) DownloadSingle(ctx context.Context, key string, dst string, overwrite bool) (string, error) {
+	// if dest is dir, create file in this dir with the filename as the filename of key
+	if info, err := os.Stat(dst); err == nil && info.IsDir() {
+		dst = filepath.Join(dst, filepath.Base(key))
+	}
+	if !overwrite {
+		if _, err := os.Stat(dst); err == nil {
+			return "", errors.Errorf("dest %s already exists", dst)
+		}
+	}
+	file, err := os.Create(dst)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	_, err = b.DownloadWriter(ctx, key, file)
+	return dst, err
+}
+
+func (b *BucketManager) DownloadWriter(ctx context.Context, key string, dst io.WriterAt) (int64, error) {
+	return b.downloader.Download(ctx, dst, &awss3.GetObjectInput{
+		Bucket: &b.Bucket,
+		Key:    &key,
+	})
+}
+
+func (b *BucketManager) Delete(ctx context.Context, key string) (deletes *awss3.DeleteObjectsOutput, err error) {
+	var keys []types.ObjectIdentifier
+	var continuation *string
+	for {
+		objects, err := b.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+			Bucket:            &b.Bucket,
+			Prefix:            &key,
+			ContinuationToken: continuation,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, obj := range objects.Contents {
+			keys = append(keys, types.ObjectIdentifier{Key: obj.Key})
+		}
+		if !objects.IsTruncated {
+			break
+		}
+		continuation = objects.NextContinuationToken
+	}
+	if len(keys) == 0 {
+		return
+	}
+	return b.client.DeleteObjects(ctx, &awss3.DeleteObjectsInput{
+		Bucket: &b.Bucket,
+		Delete: &types.Delete{
+			Objects: keys,
+		},
+	})
+}
+
+func (b *BucketManager) DeleteSingle(ctx context.Context, key string) error {
+	_, err := b.client.DeleteObject(ctx, &awss3.DeleteObjectInput{
+		Bucket: &b.Bucket,
+		Key:    &key,
+	})
+	return err
+}
+
+func (b *BucketManager) ObjectS3URL(key string) string {
+	return fmt.Sprintf("s3://%s/%s", b.Bucket, key)
 }

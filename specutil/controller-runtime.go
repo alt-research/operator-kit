@@ -13,6 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -33,6 +34,7 @@ type Builder[O client.Object, L ObjectList] struct {
 
 func NewControllerManagedBy[O client.Object, L ObjectList](mgr ctrl.Manager, typ O, listType L) *Builder[O, L] {
 	b := builder.ControllerManagedBy(mgr)
+	b.WithOptions(controller.Options{MaxConcurrentReconciles: 10})
 	b.For(typ)
 	return &Builder[O, L]{builder: b, mgr: mgr, typ: typ, listType: listType}
 }
@@ -60,11 +62,11 @@ func (b *Builder[O, L]) Owns(obj client.Object) *Builder[O, L] {
 	return b
 }
 
-func (b *Builder[O, L]) Watches(obj client.Object, eventhandler handler.EventHandler, opts ...builder.WatchesOption) *Builder[O, L] {
+func (b *Builder[O, L]) Watches(src client.Object, eventhandler handler.EventHandler, opts ...builder.WatchesOption) *Builder[O, L] {
 	if b.err != nil {
 		return b
 	}
-	b.builder.Watches(obj, eventhandler, opts...)
+	b.builder.Watches(src, eventhandler, opts...)
 	return b
 }
 
@@ -98,7 +100,7 @@ func (b *Builder[O, L]) WatchOneToOne(watchedType client.Object, fn func(obj O) 
 	}
 	b.builder.Watches(
 		watchedType,
-		handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
 			name := fn(obj.(O))
 			if name == "" {
 				return []reconcile.Request{}

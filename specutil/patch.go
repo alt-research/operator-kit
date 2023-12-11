@@ -33,9 +33,10 @@ func mutate(f cu.MutateFn, key client.ObjectKey, obj client.Object) error {
 //
 // It returns the executed operation and an error.
 func Patch(ctx context.Context, c client.Client, obj client.Object, f cu.MutateFn) (cu.OperationResult, error) {
-	return patch(ctx, c, obj, f, true)
+	return patch(ctx, c, obj, f, true, nil)
 }
-func patch(ctx context.Context, c client.Client, obj client.Object, f cu.MutateFn, abortOnMutateError bool) (cu.OperationResult, error) {
+
+func patch(ctx context.Context, c client.Client, obj client.Object, f cu.MutateFn, abortOnMutateError bool, onChange func()) (cu.OperationResult, error) {
 	key := client.ObjectKeyFromObject(obj)
 	if err := c.Get(ctx, key, obj); err != nil {
 		return cu.OperationResultNone, err
@@ -86,6 +87,31 @@ func patch(ctx context.Context, c client.Client, obj client.Object, f cu.MutateF
 	// copy to avoid unnecessary patching later.
 	if hasAfterStatus {
 		unstructured.RemoveNestedField(after, "status")
+	}
+
+	if !reflect.DeepEqual(before, after) || ((hasBeforeStatus || hasAfterStatus) && !reflect.DeepEqual(beforeStatus, afterStatus)) {
+		if onChange != nil {
+			// make additional change
+			onChange()
+			// calculate new afters
+			// Convert the resource to unstructured to compare against our before copy.
+			after, err = runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+			if err != nil {
+				return cu.OperationResultNone, err
+			}
+
+			// Attempt to extract the status from the resource for easier comparison later
+			afterStatus, hasAfterStatus, err = unstructured.NestedFieldCopy(after, "status")
+			if err != nil {
+				return cu.OperationResultNone, err
+			}
+
+			// If the resource contains a status then remove it from the unstructured
+			// copy to avoid unnecessary patching later.
+			if hasAfterStatus {
+				unstructured.RemoveNestedField(after, "status")
+			}
+		}
 	}
 
 	result := cu.OperationResultNone

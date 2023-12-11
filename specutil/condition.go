@@ -8,6 +8,7 @@ package specutil
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -84,7 +85,7 @@ func PatchWithCondition(ctx context.Context, c client.Client, obj client.Object,
 			return err
 		}
 		return err
-	}, false)
+	}, false, nil)
 }
 
 type PatchConditionOption func(opts *PatchConditionOptions)
@@ -141,4 +142,13 @@ func WithFailCb(failCb func()) PatchConditionOption {
 	return func(opts *PatchConditionOptions) {
 		opts.FailCb = failCb
 	}
+}
+
+func LastTransitionTime(conditions *[]metav1.Condition) (t time.Time) {
+	for _, c := range *conditions {
+		if c.LastTransitionTime.After(t) {
+			t = c.LastTransitionTime.Time
+		}
+	}
+	return
 }

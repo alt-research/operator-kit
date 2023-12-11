@@ -8,6 +8,7 @@ package commonspec
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/alt-research/operator-kit/must"
@@ -33,7 +34,7 @@ type S3ObjectRef struct {
 	// The URL where the object was uploaded to.
 	Location string `json:"location,omitempty"`
 
-	Size uint64 `json:"size,omitempty"`
+	Size int64 `json:"size,omitempty"`
 
 	// The ID for a multipart upload to S3. In the case of an error the error
 	// can be cast to the MultiUploadFailure interface to extract the upload ID.
@@ -65,9 +66,17 @@ type S3ObjectRef struct {
 }
 
 type S3ObjectRefStatus struct {
-	Url   string `json:"url,omitempty"`
-	S3Url string `json:"s3Url,omitempty"`
-	Size  string `json:"size,omitempty"`
+	Name      string  `json:"name,omitempty"`
+	Filename  string  `json:"filename,omitempty"`
+	ETag      *string `json:"etag,omitempty"`
+	Key       string  `json:"key,omitempty"`
+	Size      string  `json:"size,omitempty"`
+	SizeBytes int64   `json:"sizeBytes,omitempty"`
+	Url       string  `json:"url,omitempty"`
+	S3Url     string  `json:"s3Url,omitempty"`
+
+	//+kubebuilder:validation:Format="date-time"
+	LastModified string `json:"createTime,omitempty"`
 }
 
 func (o *S3ObjectRef) Url() string {
@@ -82,7 +91,7 @@ func (o *S3ObjectRef) S3Url() string {
 }
 
 func (o *S3ObjectRef) SizeReadable() string {
-	return humanize.IBytes(o.Size)
+	return humanize.IBytes(uint64(o.Size))
 }
 
 func (o *S3ObjectRef) FromUpload(up s3util.UploadOutput) error {
@@ -100,7 +109,7 @@ func (o *S3ObjectRef) FromUpload(up s3util.UploadOutput) error {
 	o.Endpoint = up.Endpoint
 	o.Region = up.Region
 	o.Bucket = up.Bucket
-	o.Size = uint64(up.Size)
+	o.Size = up.Size
 	// o.Bucket = strings.TrimSuffix(u.Path[1:], "/"+*up.Key)
 	o.Key = *up.Key
 	o.ETag = up.ETag
@@ -120,13 +129,18 @@ func (o *S3ObjectRef) FromHeadOutput(head s3util.HeadObjectOutput) {
 	o.StorageClass = string(head.StorageClass)
 	o.LastModified = head.LastModified.Format(time.RFC3339)
 	o.VersionID = head.VersionId
-	o.Size = uint64(head.ContentLength)
+	o.Size = head.ContentLength
 }
 
 func (o *S3ObjectRef) ToStatus(s *S3ObjectRefStatus) {
+	s.Filename = o.Filename
 	s.Url = o.Url()
 	s.S3Url = o.S3Url()
 	s.Size = o.SizeReadable()
+	s.SizeBytes = o.Size
+	s.Key = o.Key
+	s.ETag = o.ETag
+	s.LastModified = o.LastModified
 }
 
 func (r *S3ObjectRef) SetDefaults() {
@@ -135,4 +149,19 @@ func (r *S3ObjectRef) SetDefaults() {
 	if r.Key == "" {
 		r.Key = r.KeyPrefix + "/" + r.Filename
 	}
+}
+
+func (s *S3ObjectRefStatus) FromUpload(up s3util.UploadOutput) {
+	s.Filename = filepath.Base(*up.Key)
+	s.ETag = up.ETag
+	s.Size = humanize.IBytes(uint64(up.Size))
+	s.SizeBytes = up.Size
+	s.Url = up.Location
+	s.S3Url = fmt.Sprintf("s3://%s/%s", up.Bucket, *up.Key)
+}
+
+func (s *S3ObjectRefStatus) FromHeadOutput(head s3util.HeadObjectOutput) {
+	r := S3ObjectRef{}
+	r.FromHeadOutput(head)
+	r.ToStatus(s)
 }

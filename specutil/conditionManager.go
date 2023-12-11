@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/alt-research/operator-kit/commonspec"
+	"github.com/alt-research/operator-kit/maputil"
 	"github.com/alt-research/operator-kit/must"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -23,6 +25,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+const LastTransitionTimeAnnotation = "app.altlayer.io/last-transition-time"
 
 var doNotCatchPanic = os.Getenv("DO_NOT_CATCH_PANIC") == "true"
 
@@ -38,23 +42,33 @@ type StepSkipper func(s Step, cond *metav1.Condition) bool
 
 // ConditionManager is a helper to separate the logic of managing conditions from the controller logic.
 type ConditionManager struct {
-	client             client.Client
-	req                reconcile.Request
-	obj                client.Object
-	cp                 *commonspec.ConditionPhase
-	steps              []Step
-	skipper            func() bool
-	preFinalizeSkipper func() bool
-	stepSkipper        StepSkipper
-	finalizer          string
-	finalizeFunc       func() error
-	afterDeletion      func()
-	defaultFailResult  reconcile.Result
-	eventRecorder      record.EventRecorder
+	client               client.Client
+	req                  reconcile.Request
+	obj                  client.Object
+	cp                   *commonspec.ConditionPhase
+	steps                []Step
+	skipper              func() bool
+	preFinalizeSkipper   func() bool
+	stepSkipper          StepSkipper
+	finalizer            string
+	finalizeFunc         func() error
+	afterDeletion        func()
+	defaultFailResult    reconcile.Result
+	eventRecorder        record.EventRecorder
+	minReconcileInterval time.Duration
 }
 
 func NewConditionManager(client client.Client, req reconcile.Request, obj client.Object, cp *commonspec.ConditionPhase) *ConditionManager {
-	return &ConditionManager{client: client, obj: obj, req: req, cp: cp, defaultFailResult: reconcile.Result{Requeue: true, RequeueAfter: 30 * time.Second}}
+	return &ConditionManager{
+		client: client, obj: obj, req: req, cp: cp,
+		defaultFailResult:    reconcile.Result{Requeue: true, RequeueAfter: 30 * time.Second},
+		minReconcileInterval: 1 * time.Second,
+	}
+}
+
+func (m *ConditionManager) WithMinReconcileInterval(d time.Duration) *ConditionManager {
+	m.minReconcileInterval = d
+	return m
 }
 
 func (m *ConditionManager) WithDefaultFailResult(result reconcile.Result) *ConditionManager {
@@ -136,12 +150,12 @@ func (m *ConditionManager) Step(conditionType string, f StepFunc, options ...Pat
 func (m *ConditionManager) Run(ctx context.Context) (reconcile.Result, error) {
 	log := log.FromContext(ctx)
 	if err := m.client.Get(ctx, m.req.NamespacedName, m.obj); err != nil {
-		log.V(3).Error(err, "failed to get object")
 		if m.afterDeletion != nil {
 			m.afterDeletion()
 		}
-		return reconcile.Result{}, nil
+		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
+
 	if m.preFinalizeSkipper != nil && m.preFinalizeSkipper() {
 		return reconcile.Result{}, nil
 	}
@@ -166,6 +180,14 @@ func (m *ConditionManager) Run(ctx context.Context) (reconcile.Result, error) {
 	if m.skipper != nil && m.skipper() {
 		return reconcile.Result{}, nil
 	}
+
+	if t, ok := m.obj.GetAnnotations()[LastTransitionTimeAnnotation]; ok {
+		lastTransitionTime, _ := time.Parse(time.RFC3339, t)
+		if time.Since(lastTransitionTime) < m.minReconcileInterval {
+			return reconcile.Result{RequeueAfter: m.minReconcileInterval}, nil
+		}
+	}
+
 	// Patch Object with condition
 	for _, s := range m.steps {
 		cond := apimeta.FindStatusCondition(m.cp.Conditions, s.ConditionType)
@@ -188,87 +210,124 @@ func (m *ConditionManager) Run(ctx context.Context) (reconcile.Result, error) {
 				return must.Default(s.opts.FailResult, m.defaultFailResult), nil
 			}
 		}
-		var exit bool
-		var rst reconcile.Result
-		if _, err := patch(ctx, m.client, m.obj, func() error {
-			var panicErr error
-			err := func() error {
-				if !doNotCatchPanic {
-					defer func() {
-						r := recover()
-						if r != nil {
-							panicErr = fmt.Errorf("panic: %v\n%s", r, string(debug.Stack()))
-						}
-					}()
+		for try := 0; try < 5; try++ {
+			var exit bool
+			var rst reconcile.Result
+			if _, err := patch(ctx, m.client, m.obj, func() error {
+				var panicErr error
+				err := func() error {
+					if !doNotCatchPanic {
+						defer func() {
+							r := recover()
+							if r != nil {
+								panicErr = fmt.Errorf("panic: %v\n%s", r, string(debug.Stack()))
+							}
+						}()
+					}
+					return s.TransitionFunc()
+				}()
+				if panicErr != nil {
+					err = panicErr
 				}
-				return s.TransitionFunc()
-			}()
-			if panicErr != nil {
-				err = panicErr
-			}
-			// return nil and Success
-			if err == nil || reflect.ValueOf(err).IsZero() {
-				apimeta.SetStatusCondition(&m.cp.Conditions, metav1.Condition{
-					Type:    s.ConditionType,
-					Status:  metav1.ConditionTrue,
-					Reason:  s.opts.SuccessReason,
-					Message: s.opts.SuccessMessage,
-				})
+				// return nil and Success
+				if err == nil || reflect.ValueOf(err).IsZero() {
+					con := apimeta.FindStatusCondition(m.cp.Conditions, s.ConditionType)
+					if con == nil || con.Status != metav1.ConditionTrue {
+						apimeta.SetStatusCondition(&m.cp.Conditions, metav1.Condition{
+							Type:    s.ConditionType,
+							Status:  metav1.ConditionTrue,
+							Reason:  s.opts.SuccessReason,
+							Message: s.opts.SuccessMessage,
+						})
+						if err := s.opts.AfterConditionSet(); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+				reason := s.opts.DefaultFailReason
+				prefix := s.opts.DefaultFailMessagePrefix
+				var phaseSet bool
+				var cond metav1.Condition
+				if e, ok := err.(*ConditionResult); ok {
+					cond = e.AsCondition(s.ConditionType)
+					exit = e.Exit
+					rst = e.Result
+					if e.Phase != "" {
+						m.cp.Phase = e.Phase
+						phaseSet = true
+					}
+					if !e.noEvent && m.eventRecorder != nil {
+						typ := corev1.EventTypeNormal
+						if cond.Status == metav1.ConditionFalse {
+							typ = corev1.EventTypeWarning
+						}
+						m.eventRecorder.Event(m.obj, typ, cond.Reason, cond.Message)
+					}
+				} else {
+					cond = metav1.Condition{
+						Type:    s.ConditionType,
+						Status:  metav1.ConditionFalse,
+						Reason:  reason,
+						Message: fmt.Sprintf("%s: %s", prefix, err.Error()),
+					}
+				}
+				// only update if changed
+				// oldCon := apimeta.FindStatusCondition(m.cp.Conditions, s.ConditionType)
+				// if oldCon != nil || oldCon.Status != cond.Status || oldCon.Reason != cond.Reason || oldCon.Message != cond.Message {
+				// }
+				apimeta.SetStatusCondition(&m.cp.Conditions, cond)
+				// condition failed
+				if cond.Status == metav1.ConditionFalse {
+					log.Info("condition failed", "reason", cond.Reason, "message", cond.Message)
+					if !phaseSet {
+						m.cp.Phase = commonspec.PhaseType(cond.Reason)
+					}
+					if s.opts.FailCb != nil {
+						s.opts.FailCb()
+					}
+				} else {
+					err = nil
+				}
 				if err := s.opts.AfterConditionSet(); err != nil {
 					return err
 				}
-				return nil
-			}
-			reason := s.opts.DefaultFailReason
-			prefix := s.opts.DefaultFailMessagePrefix
-			var phaseSet bool
-			var cond metav1.Condition
-			if e, ok := err.(*ConditionResult); ok {
-				cond = e.AsCondition(s.ConditionType)
-				exit = e.Exit
-				rst = e.Result
-				if e.Phase != "" {
-					m.cp.Phase = e.Phase
-					phaseSet = true
-				}
-				if !e.noEvent && m.eventRecorder != nil {
-					typ := corev1.EventTypeNormal
-					if cond.Status == metav1.ConditionFalse {
-						typ = corev1.EventTypeWarning
-					}
-					m.eventRecorder.Event(m.obj, typ, cond.Reason, cond.Message)
-				}
-			} else {
-				cond = metav1.Condition{
-					Type:    s.ConditionType,
-					Status:  metav1.ConditionFalse,
-					Reason:  reason,
-					Message: fmt.Sprintf("%s: %s", prefix, err.Error()),
-				}
-			}
-			apimeta.SetStatusCondition(&m.cp.Conditions, cond)
-			// condition failed
-			if cond.Status == metav1.ConditionFalse {
-				log.Info("condition failed", "reason", cond.Reason, "message", cond.Message)
-				if !phaseSet {
-					m.cp.Phase = commonspec.PhaseType(cond.Reason)
-				}
-				if s.opts.FailCb != nil {
-					s.opts.FailCb()
-				}
-			} else {
-				err = nil
-			}
-			if err := s.opts.AfterConditionSet(); err != nil {
 				return err
+			},
+				false,
+				// only update last transition time if transition func made any changes
+				func() {
+					anno := m.obj.GetAnnotations()
+					maputil.MergeOverwrite(&anno, map[string]string{LastTransitionTimeAnnotation: time.Now().Format(time.RFC3339)})
+					m.obj.SetAnnotations(anno)
+				},
+			); err != nil {
+				if apierrors.IsConflict(err) {
+					// client cache not refreshed in time, causing conflicts, retry
+					log.V(3).Info("conflict", "step", s.ConditionType)
+					time.Sleep(100 * time.Microsecond)
+					continue
+				}
+				if apierrors.IsInvalid(err) {
+					// might be client cache not refreshed in time, causing conflicts, retry
+					log.V(3).Info("resource invalid, may be client caching issue", "step", s.ConditionType)
+					time.Sleep(100 * time.Microsecond)
+					continue
+				}
+				if apierrors.IsNotFound(err) {
+					return reconcile.Result{Requeue: true}, nil
+				}
+				// errored, abort
+				log.Error(err, "step failed", "step", s.ConditionType)
+				return must.Default(rst, s.opts.FailResult, m.defaultFailResult), nil
+			} else if exit { // no error but want to abort
+				return must.Default(rst, s.opts.FailResult, m.defaultFailResult), nil
+			} else {
+				break // success
 			}
-			return err
-		}, false); err != nil {
-			log.Error(err, "step failed", "step", s.ConditionType)
-			return must.Default(rst, s.opts.FailResult, m.defaultFailResult), nil
-		} else if exit {
-			return must.Default(rst, s.opts.FailResult, m.defaultFailResult), nil
 		}
+		// give more chance to controller manager to refresh cache
+		time.Sleep(10 * time.Millisecond)
 	}
 	return reconcile.Result{}, nil
 }
