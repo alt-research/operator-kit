@@ -129,7 +129,9 @@ func (o *S3ObjectRef) FromHeadOutput(head s3util.HeadObjectOutput) {
 	o.StorageClass = string(head.StorageClass)
 	o.LastModified = head.LastModified.Format(time.RFC3339)
 	o.VersionID = head.VersionId
-	o.Size = head.ContentLength
+	if head.ContentLength != nil {
+		o.Size = *head.ContentLength
+	}
 }
 
 func (o *S3ObjectRef) ToStatus(s *S3ObjectRefStatus) {

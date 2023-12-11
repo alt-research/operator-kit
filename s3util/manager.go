@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/alt-research/operator-kit/awstools"
+	"github.com/alt-research/operator-kit/ptr"
 	"github.com/alt-research/operator-kit/syncmap"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3mgr "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -196,7 +197,7 @@ func (b *BucketManager) IsPathDir(ctx context.Context, path string) (bool, error
 	if path == "" || path[len(path)-1] == '/' {
 		return true, nil
 	}
-	res, err := b.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{Bucket: &b.Bucket, Prefix: &path, MaxKeys: 2})
+	res, err := b.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{Bucket: &b.Bucket, Prefix: &path, MaxKeys: ptr.Of(int32(2))})
 	if err != nil {
 		return false, err
 	}
@@ -270,7 +271,7 @@ func (b *BucketManager) Download(ctx context.Context, key string, dst string, ov
 		for _, obj := range objects.Contents {
 			keys = append(keys, *obj.Key)
 		}
-		if !objects.IsTruncated {
+		if !(objects.IsTruncated != nil && *objects.IsTruncated) {
 			break
 		}
 		continuation = objects.NextContinuationToken
@@ -344,7 +345,7 @@ func (b *BucketManager) Delete(ctx context.Context, key string) (deletes *awss3.
 		for _, obj := range objects.Contents {
 			keys = append(keys, types.ObjectIdentifier{Key: obj.Key})
 		}
-		if !objects.IsTruncated {
+		if !(objects.IsTruncated != nil && *objects.IsTruncated) {
 			break
 		}
 		continuation = objects.NextContinuationToken
@@ -352,12 +353,28 @@ func (b *BucketManager) Delete(ctx context.Context, key string) (deletes *awss3.
 	if len(keys) == 0 {
 		return
 	}
-	return b.client.DeleteObjects(ctx, &awss3.DeleteObjectsInput{
-		Bucket: &b.Bucket,
-		Delete: &types.Delete{
-			Objects: keys,
-		},
-	})
+	length := len(keys)
+	out := &awss3.DeleteObjectsOutput{}
+	for i := 0; i < length; i += 1000 {
+		end := i + 1000
+		if end > length {
+			end = length
+		}
+		res, err := b.client.DeleteObjects(ctx, &awss3.DeleteObjectsInput{
+			Bucket: &b.Bucket,
+			Delete: &types.Delete{
+				Objects: keys[i:end],
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		out.Deleted = append(out.Deleted, res.Deleted...)
+		out.Errors = append(out.Errors, res.Errors...)
+		out.RequestCharged = res.RequestCharged
+		out.ResultMetadata = res.ResultMetadata
+	}
+	return out, nil
 }
 
 func (b *BucketManager) DeleteSingle(ctx context.Context, key string) error {

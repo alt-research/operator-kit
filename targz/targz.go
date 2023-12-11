@@ -1,3 +1,8 @@
+// Copyright (C) Alt Research Ltd. All Rights Reserved.
+//
+// This source code is licensed under the limited license found in the LICENSE file
+// in the root directory of this source tree.
+
 // Package targz contains methods to create and extract tar gz archives.
 //
 // Usage (discarding potential errors):
