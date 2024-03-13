@@ -6,6 +6,8 @@
 package envs
 
 import (
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -57,4 +59,32 @@ func EnvVarsToMap(envs []corev1.EnvVar) (map[string]string, error) {
 		m[env.Name] = env.Value
 	}
 	return m, nil
+}
+
+func Get(key, val string) string {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return val
+	}
+	return v
+}
+
+func GetInt(key string, val int) (int, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return val, nil
+	}
+	return strconv.Atoi(v)
+}
+
+func GetBool(key string, val bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return val
+	}
+	switch strings.ToLower(v) {
+	case "true", "t", "yes", "y", "on", "1":
+		return true
+	}
+	return false
 }
